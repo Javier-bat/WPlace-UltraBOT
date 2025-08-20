@@ -359,6 +359,11 @@
       padding: 16px 20px;
       position: relative;
     }
+    #purchase-modal .modal-card {
+      width: auto;
+      display: inline-block;
+      max-width: 95vw;
+    }
     .modal-header {
       font-size: 16px;
       font-weight: 600;
@@ -368,8 +373,8 @@
       position: absolute;
       top: 8px;
       right: 8px;
-      width: 28px;
-      height: 28px;
+      width: 32px;
+      height: 32px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -401,6 +406,11 @@
       left: 20px;
     }
     .modal-body { padding-bottom: 56px; min-height: 300px; max-height: 400px; overflow-y: auto; }
+    #purchase-modal .modal-body {
+      padding-bottom: 20px;
+      min-height: 0;
+      max-height: none;
+    }
     .modal-footer.split { justify-content: space-between; }
     .accounts-actions { display: flex; justify-content: flex-end; margin-bottom: 8px; margin-right: 10px; }
     #btn-check-all { margin-left: 8px; }
@@ -706,7 +716,7 @@
   </div>
 
   <div id="purchase-modal" hidden>
-    <div class="modal-card" style="width:min(320px,95vw);max-width:95vw;">
+    <div class="modal-card">
       <button id="purchase-close" class="modal-close app-btn" type="button">×</button>
       <div class="modal-body">
         <div class="purchase-stepper">
