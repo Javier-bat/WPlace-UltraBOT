@@ -294,6 +294,31 @@
       z-index: 1100;
     }
     #img-preview-modal[hidden] { display: none; }
+    #purchase-modal {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.45);
+      z-index: 1100;
+    }
+    #purchase-modal[hidden] { display: none; }
+    .purchase-stepper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin: 20px 0;
+    }
+    .purchase-stepper .app-btn {
+      width: 32px;
+      height: 32px;
+    }
+    #purchase-cost {
+      text-align: center;
+      margin-bottom: 20px;
+    }
     body.no-scroll { overflow: hidden; }
     #img-preview-canvas {
       width: min(540px, 85vw);
@@ -328,7 +353,7 @@
       border: 1px solid rgba(255,255,255,0.1);
       border-radius: 12px;
       box-shadow: 0 12px 40px rgba(0,0,0,0.5);
-      width: min(800px, 95vw);
+      width: min(1000px, 95vw);
       max-width: 95vw;
       color: #e5e7eb;
       padding: 16px 20px;
@@ -675,6 +700,23 @@
           <div class="modal-footer">
             <button id="btn-settings-save" class="app-btn" type="button" data-i18n="buttons.saveSettings">Kaydet</button>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="purchase-modal" hidden>
+    <div class="modal-card" style="width:min(320px,95vw);max-width:95vw;">
+      <button id="purchase-close" class="modal-close app-btn" type="button">×</button>
+      <div class="modal-body">
+        <div class="purchase-stepper">
+          <button id="purchase-minus" class="app-btn" type="button">-</button>
+          <span id="purchase-amount">1</span>
+          <button id="purchase-plus" class="app-btn" type="button">+</button>
+        </div>
+        <div id="purchase-cost">500 Droplets</div>
+        <div class="modal-footer">
+          <button id="purchase-confirm" class="app-btn" type="button">OK</button>
         </div>
       </div>
     </div>
@@ -1308,6 +1350,13 @@
     const accountCancelBtn = document.getElementById('btn-account-cancel');
     const accountSaveBtn = document.getElementById('btn-account-save');
     const settingsSaveBtn = document.getElementById('btn-settings-save');
+    const purchaseModal = document.getElementById('purchase-modal');
+    const purchaseClose = document.getElementById('purchase-close');
+    const purchaseMinus = document.getElementById('purchase-minus');
+    const purchasePlus = document.getElementById('purchase-plus');
+    const purchaseAmountEl = document.getElementById('purchase-amount');
+    const purchaseCostEl = document.getElementById('purchase-cost');
+    const purchaseConfirm = document.getElementById('purchase-confirm');
     let signDragging = false;
     let signWorldX = 0;
     let signWorldY = 0;
@@ -3075,6 +3124,77 @@
       accountsSection.hidden = false;
       try { accountSaveBtn.textContent = t('buttons.add'); } catch {}
     }
+    function openPurchaseModal(row, productId) {
+      if (!row) return;
+      const droplets = Number(row.droplets) || 0;
+      const maxAmount = Math.floor(droplets / 500);
+      if (maxAmount < 1) {
+        showToast(t('messages.purchaseFailed'));
+        return;
+      }
+      currentPurchaseRow = row;
+      currentPurchaseProduct = productId;
+      currentPurchaseMax = maxAmount;
+      currentPurchaseAmount = 1;
+      updatePurchaseDisplay();
+      if (purchaseModal) purchaseModal.hidden = false;
+      try { document.body.classList.add('no-scroll'); } catch {}
+    }
+    function closePurchaseModal() {
+      if (purchaseModal) purchaseModal.hidden = true;
+      try { document.body.classList.remove('no-scroll'); } catch {}
+      currentPurchaseRow = null;
+      currentPurchaseProduct = 0;
+    }
+    let currentPurchaseRow = null;
+    let currentPurchaseProduct = 0;
+    let currentPurchaseMax = 1;
+    let currentPurchaseAmount = 1;
+    function updatePurchaseDisplay() {
+      try {
+        if (purchaseAmountEl) purchaseAmountEl.textContent = String(currentPurchaseAmount);
+        if (purchaseCostEl) purchaseCostEl.textContent = String(currentPurchaseAmount * 500) + ' Droplets';
+      } catch {}
+    }
+    if (purchaseMinus) {
+      purchaseMinus.addEventListener('click', () => {
+        if (currentPurchaseAmount > 1) {
+          currentPurchaseAmount--;
+          updatePurchaseDisplay();
+        }
+      });
+    }
+    if (purchasePlus) {
+      purchasePlus.addEventListener('click', () => {
+        if (currentPurchaseAmount < currentPurchaseMax) {
+          currentPurchaseAmount++;
+          updatePurchaseDisplay();
+        }
+      });
+    }
+    if (purchaseClose) {
+      purchaseClose.addEventListener('click', () => { closePurchaseModal(); });
+    }
+    if (purchaseConfirm) {
+      purchaseConfirm.addEventListener('click', async () => {
+        try {
+          const res = await fetch('/api/accounts/' + currentPurchaseRow.id + '/purchase', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ productId: currentPurchaseProduct, amount: currentPurchaseAmount })
+          });
+          if (res.ok) {
+            await refreshAccountById(currentPurchaseRow.id);
+            showToast(t('messages.purchaseSuccess'), 'success');
+          } else {
+            showToast(t('messages.purchaseFailed'));
+          }
+        } catch {
+          showToast(t('messages.purchaseFailed'));
+        }
+        closePurchaseModal();
+      });
+    }
     if (addAccountBtn) {
       addAccountBtn.addEventListener('click', async () => {
         try { await loadSettings(); } catch {}
@@ -3104,7 +3224,7 @@
         const tdName = document.createElement('td'); tdName.textContent = row.name || '';
         const tdToken = document.createElement('td');
         const fullToken = row.token || '';
-        const shortToken = fullToken.length > 30 ? (fullToken.slice(0, 30) + '…') : fullToken;
+        const shortToken = fullToken.length > 6 ? (fullToken.slice(0, 6) + '…') : fullToken;
         tdToken.textContent = shortToken;
         tdToken.title = fullToken;
         const tdDroplets = document.createElement('td');
@@ -3151,43 +3271,15 @@
         buyMaxBtn.type = 'button';
         buyMaxBtn.className = 'app-btn';
         buyMaxBtn.textContent = t('buttons.buyMaxCharges');
-        buyMaxBtn.addEventListener('click', async () => {
-          try {
-            const res = await fetch('/api/accounts/' + row.id + '/purchase', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ productId: 70 })
-            });
-            if (res.ok) {
-              await refreshAccountById(row.id);
-              showToast(t('messages.purchaseSuccess'), 'success');
-            } else {
-              showToast(t('messages.purchaseFailed'));
-            }
-          } catch {
-            showToast(t('messages.purchaseFailed'));
-          }
+        buyMaxBtn.addEventListener('click', () => {
+          openPurchaseModal(row, 70);
         });
         const buyPaintBtn = document.createElement('button');
         buyPaintBtn.type = 'button';
         buyPaintBtn.className = 'app-btn';
         buyPaintBtn.textContent = t('buttons.buyPaintCharges');
-        buyPaintBtn.addEventListener('click', async () => {
-          try {
-            const res = await fetch('/api/accounts/' + row.id + '/purchase', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ productId: 80 })
-            });
-            if (res.ok) {
-              await refreshAccountById(row.id);
-              showToast(t('messages.purchaseSuccess'), 'success');
-            } else {
-              showToast(t('messages.purchaseFailed'));
-            }
-          } catch {
-            showToast(t('messages.purchaseFailed'));
-          }
+        buyPaintBtn.addEventListener('click', () => {
+          openPurchaseModal(row, 80);
         });
         const delBtn = document.createElement('button');
         delBtn.type = 'button';

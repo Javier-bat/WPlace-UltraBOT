@@ -198,7 +198,7 @@ async function requestMeLikePython(opts) {
   return { status, reason, body: bodyBuf.toString('utf8') };
 }
 
-async function requestPurchaseLikePython(cf_clearance, token, productId) {
+async function requestPurchaseLikePython(cf_clearance, token, productId, amount) {
   const cookieHeader = `cf_clearance=${cf_clearance || ''}; j=${token || ''}`;
   const gotScraping = await getGotScrapingFn();
   if (!gotScraping) {
@@ -211,7 +211,7 @@ async function requestPurchaseLikePython(cf_clearance, token, productId) {
       'Cookie': cookieHeader,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({ product: { id: productId, amount: 1 } }),
+    body: JSON.stringify({ product: { id: productId, amount: amount || 1 } }),
     decompress: false,
     timeout: { request: 30000 },
     agent: { https: HTTPS_AGENT }
@@ -220,7 +220,8 @@ async function requestPurchaseLikePython(cf_clearance, token, productId) {
     host: 'backend.wplace.live',
     path: '/purchase',
     headers: { Cookie: maskCookieHeader(cookieHeader) },
-    productId
+    productId,
+    amount: amount || 1
   });
   const resp = await gotScraping(options);
   let bodyBuf = resp.rawBody || Buffer.from(String(resp.body || ''), 'utf8');
@@ -586,6 +587,7 @@ function startServer(port, host) {
       const id = Number(parts[3]);
       readJsonBody(req).then((body) => {
         const productId = body && body.productId ? Number(body.productId) : 0;
+        const amount = body && body.amount ? Math.floor(Number(body.amount)) : 1;
         const accounts = readJson(ACCOUNTS_FILE, []);
         const acct = accounts.find(a => a.id === id);
         if (!acct) { res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ error: 'not found' })); return; }
@@ -593,7 +595,7 @@ function startServer(port, host) {
         if (!settings.cf_clearance || settings.cf_clearance.length < 30) { res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ error: 'cf_clearance missing' })); return; }
         if (!productId) { res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify({ error: 'productId required' })); return; }
         (async () => {
-          const r = await requestPurchaseLikePython(settings.cf_clearance, acct.token, productId);
+          const r = await requestPurchaseLikePython(settings.cf_clearance, acct.token, productId, amount);
           res.writeHead(r.status || 500, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(r.body || '');
         })().catch(() => {
