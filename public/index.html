@@ -3093,59 +3093,63 @@
       render();
     }
 
- function reloadCurrentBackground() {
+async function reloadCurrentBackground() {
   try {
     const saved = JSON.parse(localStorage.getItem('lastFetch') || 'null');
     if (saved) {
       if (saved.mode === 'mosaic') {
-        loadMosaic(saved.coords, true);
-        return;
+        await loadMosaic(saved.coords, true);
+        return true;
       }
       if (saved.mode === 'single') {
         const area = saved.coords[0].x;
         const no = saved.coords[0].y;
         const url = buildUrl(area, no) + '?t=' + Date.now();
-        const image = new Image();
-        image.onload = () => {
-          img = image;
-          baseImageData = null;
-          currentTiles = [{ x: Number(area), y: Number(no) }];
-          currentTileW = image.width;
-          currentTileH = image.height;
-          currentMosaicCols = 1;
-          currentMosaicRows = 1;
-          try { signItems.forEach(it => { if (it) it._placedCountCache = null; }); } catch {}
-          render();
-          updatePixelMarkers();
-        };
-        image.onerror = () => {};
-        image.src = url;
-        return;
+        return await new Promise(resolve => {
+          const image = new Image();
+          image.onload = () => {
+            img = image;
+            baseImageData = null;
+            currentTiles = [{ x: Number(area), y: Number(no) }];
+            currentTileW = image.width;
+            currentTileH = image.height;
+            currentMosaicCols = 1;
+            currentMosaicRows = 1;
+            try { signItems.forEach(it => { if (it) it._placedCountCache = null; }); } catch {}
+            render();
+            updatePixelMarkers();
+            resolve(true);
+          };
+          image.onerror = () => resolve(false);
+          image.src = url;
+        });
       }
     }
     // Si no hay datos guardados, carga desde los inputs
     const area = (areaInput && areaInput.value) ? String(areaInput.value).trim() : '';
     const no = (noInput && noInput.value) ? String(noInput.value).trim() : '';
-    if (!area || !no) return;
+    if (!area || !no) return false;
     const url = buildUrl(area, no) + '?t=' + Date.now();
-    const image = new Image();
-    image.onload = () => {
-      img = image;
-      baseImageData = null;
-      currentTiles = [{ x: Number(area), y: Number(no) }];
-      currentTileW = image.width;
-      currentTileH = image.height;
-      currentMosaicCols = 1;
-      currentMosaicRows = 1;
-      try { signItems.forEach(it => { if (it) it._placedCountCache = null; }); } catch {}
-      render();
-      updatePixelMarkers();
-    };
-    image.onerror = () => {};
-    image.src = url;
+    return await new Promise(resolve => {
+      const image = new Image();
+      image.onload = () => {
+        img = image;
+        baseImageData = null;
+        currentTiles = [{ x: Number(area), y: Number(no) }];
+        currentTileW = image.width;
+        currentTileH = image.height;
+        currentMosaicCols = 1;
+        currentMosaicRows = 1;
+        try { signItems.forEach(it => { if (it) it._placedCountCache = null; }); } catch {}
+        render();
+        updatePixelMarkers();
+        resolve(true);
+      };
+      image.onerror = () => resolve(false);
+      image.src = url;
+    });
   } catch {}
-
-    }
+  return false;
 
     const USE_LOCAL_TILE = false;
     function buildUrl(area, no) {
@@ -4754,7 +4758,7 @@ function loadImage(area, no, preserveView = false) {
         }
       } catch {}
       try { await loadAccounts(); } catch {}
-      try { reloadCurrentBackground(); } catch {}
+      try { await reloadCurrentBackground(); } catch {}
       finally {
         lastBulkRefreshAt = Date.now();
         bulkRefreshInFlight = false;
