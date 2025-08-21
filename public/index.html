@@ -5977,16 +5977,38 @@ if (currentTiles && currentTiles.length > 1) {
     let didReload = false;
     for (const g of groups) {
       const total = g.colors.length|0;
+      const tasks = [];
+      for (let k = 0; k < g.colors.length; k++) {
+        const c = g.colors[k];
+        const x = g.coords[k * 2];
+        const y = g.coords[k * 2 + 1];
+        tasks.push({ c, x, y });
+      }
+      const assigned = new Array(tasks.length).fill(false);
       const selectedAccounts = getSelectedAccountsSortedByCapacityDesc();
-      let offset = 0;
-      for (let i = 0; i < selectedAccounts.length && offset < total; i++) {
+      let assignedCount = 0;
+      for (let i = 0; i < selectedAccounts.length && assignedCount < total; i++) {
         const acc = selectedAccounts[i];
         const cap = Math.max(0, Math.floor(Number(acc.pixelCount) || 0));
         if (cap <= 0) continue;
-        const take = Math.min(cap, total - offset);
-        if (take <= 0) continue;
-        const colorsSlice = g.colors.slice(offset, offset + take);
-        const coordsSlice = g.coords.slice(offset * 2, (offset + take) * 2);
+        const colorsSlice = [];
+        const coordsSlice = [];
+        for (let j = 0; j < tasks.length && colorsSlice.length < cap; j++) {
+          if (assigned[j]) continue;
+          const tsk = tasks[j];
+          let ok = true;
+          if (tsk.c != null && tsk.c !== 0 && isPremiumColorId(tsk.c)) {
+            const idx = Number(tsk.c) - 32;
+            const mask = idx >= 0 ? (1 << idx) : 0;
+            const bm = Number(acc.extraColorsBitmap || 0);
+            ok = (mask !== 0) && ((bm & mask) !== 0);
+          }
+          if (!ok) continue;
+          colorsSlice.push(tsk.c);
+          coordsSlice.push(tsk.x, tsk.y);
+          assigned[j] = true;
+        }
+        if (colorsSlice.length === 0) continue;
         const r = await postBatch(String(g.area), String(g.no), colorsSlice, coordsSlice, authToken, String(acc.token || ''));
         if (r && r.status === 429) {
           hadRequestError = true;
@@ -6003,12 +6025,12 @@ if (currentTiles && currentTiles.length > 1) {
             break;
           }
         }
-        offset += take;
-        usedIds.push(acc.id); 
+        assignedCount += colorsSlice.length;
+        usedIds.push(acc.id);
         try { await refreshAccountById(acc.id); } catch {}
       }
-      if (offset > 0) paintedAny = true;
-      if (offset < total && !hadRequestError) missingTotal += (total - offset);
+      if (assignedCount > 0) paintedAny = true;
+      if (assignedCount < total && !hadRequestError) missingTotal += (total - assignedCount);
     }
     if (paintedAny) {
       showToast(t('messages.painted'), 'success', 1800);
