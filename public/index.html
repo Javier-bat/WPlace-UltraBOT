@@ -1361,6 +1361,7 @@
     const mosaicUse4 = document.getElementById('mosaic-use4');
     const mosaicFetch = document.getElementById('mosaic-fetch');
     const mosaicCanvas = document.createElement('canvas');
+    const singleCanvas = document.createElement('canvas');
     const sidebar = document.getElementById('sidebar');
     const thumbList = document.getElementById('thumb-list');
     const counter = document.getElementById('counter');
@@ -2943,6 +2944,7 @@
 
     let img = null;
     let baseImageData = null;
+    const pendingPaints = new Map();
     let currentTiles = [];
     let currentTileW = 0;
     let currentTileH = 0;
@@ -3143,7 +3145,10 @@ async function loadSingleTile(area, no, preserveView = false) {
     imgEl.onerror = reject;
     imgEl.src = url;
   });
-  img = image;
+  singleCanvas.width = image.width;
+  singleCanvas.height = image.height;
+  singleCanvas.getContext('2d').drawImage(image, 0, 0);
+  img = singleCanvas;
   baseImageData = null;
   currentTiles = [{ x: Number(area), y: Number(no) }];
   currentTileW = image.width;
@@ -3151,6 +3156,7 @@ async function loadSingleTile(area, no, preserveView = false) {
   currentMosaicCols = 1;
   currentMosaicRows = 1;
   try { signItems.forEach(it => { if (it) it._placedCountCache = null; }); } catch {}
+  reapplyPendingPaints(area, no);
   if (preserveView) {
     render();
   } else {
@@ -4948,6 +4954,7 @@ function loadImage(area, no, preserveView = false) {
         // Clear cached placed counts so auto-mode uses fresh data
         signItems.forEach(it => { if (it) it._placedCountCache = null; });
       } catch {}
+      coords.forEach(c => reapplyPendingPaints(c.x, c.y));
       if (preserveView) {
         render();
       } else {
@@ -5863,7 +5870,7 @@ function loadImage(area, no, preserveView = false) {
       return rows;
     }
 
-    async function postBatch(area, no, colors, coords, t, jToken) {
+async function postBatch(area, no, colors, coords, t, jToken) {
       try {
         const res = await fetch('/api/pixel/' + encodeURIComponent(area) + '/' + encodeURIComponent(no), {
           method: 'POST',
@@ -5878,6 +5885,40 @@ function loadImage(area, no, preserveView = false) {
       } catch (e) {
         return { ok: false, error: e && e.message ? e.message : String(e) };
       }
+}
+
+    function recordPendingPaints(colors, coords, area, no) {
+      const key = String(area) + ',' + String(no);
+      let rec = pendingPaints.get(key);
+      if (!rec) {
+        rec = { colors: [], coords: [] };
+        pendingPaints.set(key, rec);
+      }
+      rec.colors.push(...colors);
+      rec.coords.push(...coords);
+    }
+
+    function reapplyPendingPaints(area, no) {
+      const key = String(area) + ',' + String(no);
+      const rec = pendingPaints.get(key);
+      if (!rec) return;
+      applyPaintedPixels(rec.colors, rec.coords, area, no);
+      const id = ensureBaseImageData();
+      let allGood = true;
+      if (id) {
+        for (let i = 0; i < rec.colors.length; i++) {
+          const cx = Math.round(rec.coords[i * 2] || 0);
+          const cy = Math.round(rec.coords[i * 2 + 1] || 0);
+          if (cx < 0 || cy < 0 || cx >= id.width || cy >= id.height) continue;
+          const index = ((id.width * cy + cx) << 2);
+          const rgb = getPaletteRgbById(rec.colors[i]);
+          if (id.data[index] !== rgb[0] || id.data[index + 1] !== rgb[1] || id.data[index + 2] !== rgb[2] || id.data[index + 3] !== 255) {
+            allGood = false;
+            break;
+          }
+        }
+      }
+      if (allGood) pendingPaints.delete(key);
     }
 
     function applyPaintedPixels(colors, coords, area, no) {
@@ -5893,6 +5934,7 @@ function loadImage(area, no, preserveView = false) {
         offsetY = row * (currentTileH || 0);
       }
       let changed = false;
+      const ctx = img && img.getContext ? img.getContext('2d') : null;
       for (let i = 0; i < colors.length; i++) {
         const cx = Math.round(coords[i * 2] || 0) + offsetX;
         const cy = Math.round(coords[i * 2 + 1] || 0) + offsetY;
@@ -5902,12 +5944,17 @@ function loadImage(area, no, preserveView = false) {
         if (c == null || c === 0) {
           id.data[index] = id.data[index+1] = id.data[index+2] = 0;
           id.data[index+3] = 0;
+          if (ctx) ctx.clearRect(cx, cy, 1, 1);
         } else {
           const rgb = getPaletteRgbById(c);
           id.data[index] = rgb[0];
           id.data[index+1] = rgb[1];
           id.data[index+2] = rgb[2];
           id.data[index+3] = 255;
+          if (ctx) {
+            ctx.fillStyle = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
+            ctx.fillRect(cx, cy, 1, 1);
+          }
         }
         const key = String(cx) + ',' + String(cy);
         if (readyGlobalSelected && readyGlobalSelected.delete(key)) changed = true;
@@ -6014,7 +6061,10 @@ if (currentTiles && currentTiles.length > 1) {
             break;
           }
         }
-        if (r.ok) applyPaintedPixels(colorsSlice, coordsSlice, g.area, g.no);
+        if (r.ok) {
+          applyPaintedPixels(colorsSlice, coordsSlice, g.area, g.no);
+          recordPendingPaints(colorsSlice, coordsSlice, g.area, g.no);
+        }
         offset += take;
         usedIds.push(acc.id);
         try { await refreshAccountById(acc.id); } catch {}
@@ -6112,7 +6162,10 @@ if (currentTiles && currentTiles.length > 1) {
               break;
             }
           }
-          if (r.ok) applyPaintedPixels(colorsSlice, coordsSlice, area, no);
+          if (r.ok) {
+            applyPaintedPixels(colorsSlice, coordsSlice, area, no);
+            recordPendingPaints(colorsSlice, coordsSlice, area, no);
+          }
           usedIds.push(acc.id);
           assignedCount += colorsSlice.length;
           try { await refreshAccountById(acc.id); } catch {}
