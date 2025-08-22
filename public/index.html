@@ -1801,6 +1801,25 @@
     let readyMouseMoved = false;
     let autoSelectDeleteMode = false;
     const READY_CLICK_MOVE_TOLERANCE = 4;
+
+    let isPainting = false;
+    let paintingTimeout = null;
+    let missedCanvasReload = false;
+    function markPainting() {
+      isPainting = true;
+      if (paintingTimeout) clearTimeout(paintingTimeout);
+      paintingTimeout = setTimeout(() => {
+        resetPaintingFlag();
+      }, 30 * 1000);
+    }
+    function resetPaintingFlag() {
+      isPainting = false;
+      if (paintingTimeout) { clearTimeout(paintingTimeout); paintingTimeout = null; }
+      if (missedCanvasReload) {
+        missedCanvasReload = false;
+        try { reloadCurrentBackground(); } catch {}
+      }
+    }
     function getPaletteRgbById(id){
       const arr = (ACTIVE_PALETTE && Array.isArray(ACTIVE_PALETTE)) ? ACTIVE_PALETTE : PALETTE;
       for (let i = 0; i < arr.length; i++) { if (arr[i].id === id) return arr[i].rgb; }
@@ -3096,6 +3115,10 @@
     }
 
 async function reloadCurrentBackground() {
+  if (isPainting) {
+    missedCanvasReload = true;
+    return false;
+  }
   try {
     const saved = JSON.parse(localStorage.getItem('lastFetch') || 'null');
     if (saved) {
@@ -4730,7 +4753,13 @@ function loadImage(area, no, preserveView = false) {
         }
       } catch {}
       try { await loadAccounts(); } catch {}
-      try { reloadCurrentBackground(); } catch {}
+      try {
+        if (!isPainting) {
+          reloadCurrentBackground();
+        } else {
+          missedCanvasReload = true;
+        }
+      } catch {}
       finally {
         lastBulkRefreshAt = Date.now();
         bulkRefreshInFlight = false;
@@ -5625,6 +5654,7 @@ function loadImage(area, no, preserveView = false) {
 
     function resetReadyNow(){
       try { if (readyPopup) readyPopup.hidden = true; } catch {}
+      resetPaintingFlag();
       try {
         if (readyLockedItem) { readyLockedItem.lockedByReady = false; updateItemLockUi(readyLockedItem); readyLockedItem = null; }
       } catch {}
@@ -5683,6 +5713,7 @@ function loadImage(area, no, preserveView = false) {
           // Always close movement popup when toggling Ready
           try { if (movementPopup) movementPopup.hidden = true; } catch {}
           readyPopup.hidden = !readyPopup.hidden;
+          if (readyPopup.hidden) { resetPaintingFlag(); }
           
           try {
             if (!readyPopup.hidden) {
@@ -6028,81 +6059,91 @@ if (startBtn) {
 if (currentTiles && currentTiles.length > 1) {
   const groups = groupPixelsByTile(data.colors, data.coords);
   (async () => {
-    let paintedAny = false;
-    let missingTotal = 0;
-    let usedIds = []; 
-    let hadRequestError = false;
-    let didReload = false;
-    for (const g of groups) {
-      const total = g.colors.length|0;
-      const selectedAccounts = getSelectedAccountsSortedByCapacityDesc();
-      let offset = 0;
-      for (let i = 0; i < selectedAccounts.length && offset < total; i++) {
-        const acc = selectedAccounts[i];
-        const cap = Math.max(0, Math.floor(Number(acc.pixelCount) || 0));
-        if (cap <= 0) continue;
-        const take = Math.min(cap, total - offset);
-        if (take <= 0) continue;
-        const colorsSlice = g.colors.slice(offset, offset + take);
-        const coordsSlice = g.coords.slice(offset * 2, (offset + take) * 2);
-        const r = await postBatch(String(g.area), String(g.no), colorsSlice, coordsSlice, authToken, String(acc.token || ''));
-        if (r && r.status === 429) {
-          hadRequestError = true;
-          try { showToast(t('messages.cfClearanceChange'), 'error', 3500); } catch { showToast('Please change cf_clearance.', 'error', 3500); }
-          break;
-        }
-        if (!r.ok) {
-          if (r.status >= 500) {
-            try { await loadAccounts(); } catch {}
-            continue;
-          } else {
+    markPainting();
+    try {
+      let paintedAny = false;
+      let missingTotal = 0;
+      let usedIds = [];
+      let hadRequestError = false;
+      let didReload = false;
+      for (const g of groups) {
+        const total = g.colors.length|0;
+        const selectedAccounts = getSelectedAccountsSortedByCapacityDesc();
+        let offset = 0;
+        for (let i = 0; i < selectedAccounts.length && offset < total; i++) {
+          const acc = selectedAccounts[i];
+          const cap = Math.max(0, Math.floor(Number(acc.pixelCount) || 0));
+          if (cap <= 0) continue;
+          const take = Math.min(cap, total - offset);
+          if (take <= 0) continue;
+          const colorsSlice = g.colors.slice(offset, offset + take);
+          const coordsSlice = g.coords.slice(offset * 2, (offset + take) * 2);
+          const r = await postBatch(String(g.area), String(g.no), colorsSlice, coordsSlice, authToken, String(acc.token || ''));
+          if (r && r.status === 429) {
             hadRequestError = true;
-            showToast(r.payload ? JSON.stringify(r.payload) : (r.text || r.error || t('messages.errorGeneric')), 'error', 3000);
+            try { showToast(t('messages.cfClearanceChange'), 'error', 3500); } catch { showToast('Please change cf_clearance.', 'error', 3500); }
             break;
           }
+          if (!r.ok) {
+            if (r.status >= 500) {
+              try { await loadAccounts(); } catch {}
+              continue;
+            } else {
+              hadRequestError = true;
+              showToast(r.payload ? JSON.stringify(r.payload) : (r.text || r.error || t('messages.errorGeneric')), 'error', 3000);
+              break;
+            }
+          }
+          if (r.ok) {
+            applyPaintedPixels(colorsSlice, coordsSlice, g.area, g.no);
+            recordPendingPaints(colorsSlice, coordsSlice, g.area, g.no);
+          }
+          offset += take;
+          usedIds.push(acc.id);
+          try { await refreshAccountById(acc.id); } catch {}
         }
-        if (r.ok) {
-          applyPaintedPixels(colorsSlice, coordsSlice, g.area, g.no);
-          recordPendingPaints(colorsSlice, coordsSlice, g.area, g.no);
+        if (offset > 0) paintedAny = true;
+        if (offset < total && !hadRequestError) missingTotal += (total - offset);
+      }
+      if (paintedAny) {
+        showToast(t('messages.painted'), 'success', 1800);
+        if (!isPainting) {
+          didReload = await reloadCurrentBackground();
+        } else {
+          missedCanvasReload = true;
+          didReload = false;
         }
-        offset += take;
-        usedIds.push(acc.id);
-        try { await refreshAccountById(acc.id); } catch {}
+        try { clearAllReadySelections(); } catch {}
+        try { readyGlobalMode = false; } catch {}
+        if (!autoMode) {
+          try { resetReadyNow(); } catch {}
+        }
+        try { updateStartEnabled(); } catch {}
       }
-      if (offset > 0) paintedAny = true;
-      if (offset < total && !hadRequestError) missingTotal += (total - offset);
-    }
-    if (paintedAny) {
-      showToast(t('messages.painted'), 'success', 1800);
-      didReload = await reloadCurrentBackground();
-      try { clearAllReadySelections(); } catch {}
-      try { readyGlobalMode = false; } catch {}
-      if (!autoMode) {
-        try { resetReadyNow(); } catch {}
+      if (missingTotal > 0) {
+        showToast(t('messages.insufficientPixelPower', { n: missingTotal }), 'error', 3000);
       }
-      try { updateStartEnabled(); } catch {}
-    }
-    if (missingTotal > 0) {
-      showToast(t('messages.insufficientPixelPower', { n: missingTotal }), 'error', 3000);
-    }
-    try { await loadAccounts(); } catch {}
-    try { updateReadySelectionLabel(); } catch {}
-    render();
-    // Auto mode: después de pintar, selecciona la siguiente cuenta y auto selecciona píxeles
-    if (autoMode && paintedAny && !hadRequestError) {
-      try {
-        await loadAccounts();
-        try { renderReadyAccountList(); } catch {}
-        updateReadyPixelForSelectedAccounts();
-        const nextId = pickNextBestAccountId(usedIds); 
-        if (nextId != null) {
-          readySelectedAccountIds = [nextId];
+      try { await loadAccounts(); } catch {}
+      try { updateReadySelectionLabel(); } catch {}
+      render();
+      // Auto mode: después de pintar, selecciona la siguiente cuenta y auto selecciona píxeles
+      if (autoMode && paintedAny && !hadRequestError) {
+        try {
+          await loadAccounts();
           try { renderReadyAccountList(); } catch {}
           updateReadyPixelForSelectedAccounts();
-          try { await new Promise(resolve => setTimeout(resolve, didReload ? 50 : 300)); } catch {}
-          if (autoSelectBtn) { autoSelectDeleteMode = false; autoSelectBtn.click(); }
-        }
-      } catch {}
+          const nextId = pickNextBestAccountId(usedIds);
+          if (nextId != null) {
+            readySelectedAccountIds = [nextId];
+            try { renderReadyAccountList(); } catch {}
+            updateReadyPixelForSelectedAccounts();
+            try { await new Promise(resolve => setTimeout(resolve, didReload ? 50 : 300)); } catch {}
+            if (autoSelectBtn) { autoSelectDeleteMode = false; autoSelectBtn.click(); }
+          }
+        } catch {}
+      }
+    } finally {
+      resetPaintingFlag();
     }
   })();
 } else {
@@ -6120,11 +6161,13 @@ if (currentTiles && currentTiles.length > 1) {
       }
       const assigned = new Array(tasks.length).fill(false);
       (async () => {
-        let assignedCount = 0;
-        const usedIds = [];
-        let hadRequestError = false;
-        let didReload = false;
-        for (let i = 0; i < selectedAccounts.length && assignedCount < total; i++) {
+        markPainting();
+        try {
+          let assignedCount = 0;
+          const usedIds = [];
+          let hadRequestError = false;
+          let didReload = false;
+          for (let i = 0; i < selectedAccounts.length && assignedCount < total; i++) {
           const acc = selectedAccounts[i];
           const cap = Math.max(0, Math.floor(Number(acc.pixelCount) || 0));
           if (cap <= 0) continue;
@@ -6170,23 +6213,28 @@ if (currentTiles && currentTiles.length > 1) {
           assignedCount += colorsSlice.length;
           try { await refreshAccountById(acc.id); } catch {}
         }
-        if (assignedCount > 0) {
-          showToast(t('messages.painted'), 'success', 1800);
-          didReload = await reloadCurrentBackground();
-          try { clearAllReadySelections(); } catch {}
-          try { readyGlobalMode = false; } catch {}
-          if (!autoMode) {
-            try { resetReadyNow(); } catch {}
+          if (assignedCount > 0) {
+            showToast(t('messages.painted'), 'success', 1800);
+            if (!isPainting) {
+              didReload = await reloadCurrentBackground();
+            } else {
+              missedCanvasReload = true;
+              didReload = false;
+            }
+            try { clearAllReadySelections(); } catch {}
+            try { readyGlobalMode = false; } catch {}
+            if (!autoMode) {
+              try { resetReadyNow(); } catch {}
+            }
+            try { updateStartEnabled(); } catch {}
           }
-          try { updateStartEnabled(); } catch {}
-        }
-        if (assignedCount < total && !hadRequestError) {
-          showToast(t('messages.insufficientPixelPower', { n: (total - assignedCount) }), 'error', 3000);
-        }
-        try { await loadAccounts(); } catch {}
-        try { updateReadySelectionLabel(); } catch {}
-        render();
-        // Auto mode: después de pintar, selecciona la siguiente cuenta y auto selecciona píxeles
+          if (assignedCount < total && !hadRequestError) {
+            showToast(t('messages.insufficientPixelPower', { n: (total - assignedCount) }), 'error', 3000);
+          }
+          try { await loadAccounts(); } catch {}
+          try { updateReadySelectionLabel(); } catch {}
+          render();
+          // Auto mode: después de pintar, selecciona la siguiente cuenta y auto selecciona píxeles
 if (autoMode && assignedCount > 0 && !hadRequestError) {
   try {
     await loadAccounts();
@@ -6202,6 +6250,9 @@ if (autoMode && assignedCount > 0 && !hadRequestError) {
     }
   } catch {}
 }
+        } finally {
+          resetPaintingFlag();
+        }
       })();
     }
   });
@@ -6407,6 +6458,7 @@ if (autoMode && assignedCount > 0 && !hadRequestError) {
 
     const CANVAS_REFRESH_MS = 30 * 1000;
     setInterval(() => {
+      if (isPainting) { missedCanvasReload = true; return; }
       try {
         const saved = JSON.parse(localStorage.getItem('lastFetch') || 'null');
         if (!saved) return;
