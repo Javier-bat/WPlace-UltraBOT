@@ -3091,12 +3091,14 @@ async function reloadCurrentBackground() {
     if (saved) {
       if (saved.mode === 'mosaic') {
         await loadMosaic(saved.coords, true);
+                  console.log(`[reloadCurrentBackground] /tiles (mosaic) loaded`, saved.coords);
         return true;
       }
       if (saved.mode === 'single') {
         const area = saved.coords[0].x;
         const no = saved.coords[0].y;
         await loadSingleTile(area, no, true);
+        console.log(`[reloadCurrentBackground] /tiles (single) loaded`, saved.coords);
         return true;
       }
       return false;
@@ -5816,7 +5818,7 @@ function loadImage(area, no, preserveView = false) {
         const text = await res.text();
         let payload = null;
         try { payload = JSON.parse(text); } catch {}
-        
+        console.log(`[pixel]  ${res.status}`);
         return { ok: res.status < 500 && !!(payload && Object.prototype.hasOwnProperty.call(payload, 'painted')), payload, text, status: res.status };
       } catch (e) {
         return { ok: false, error: e && e.message ? e.message : String(e) };
