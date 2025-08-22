@@ -3093,65 +3093,27 @@
       render();
     }
 
- async function reloadCurrentBackground() {
+async function reloadCurrentBackground() {
   try {
     const saved = JSON.parse(localStorage.getItem('lastFetch') || 'null');
     if (saved) {
       if (saved.mode === 'mosaic') {
-        try {
-          await loadMosaic(saved.coords, true);
-          return true;
-        } catch {
-          return false;
-        }
+        await loadMosaic(saved.coords, true);
+        return true;
       }
       if (saved.mode === 'single') {
         const area = saved.coords[0].x;
         const no = saved.coords[0].y;
-        return await new Promise(resolve => {
-          const url = buildUrl(area, no) + '?t=' + Date.now();
-          const image = new Image();
-          image.onload = () => {
-            img = image;
-            baseImageData = null;
-            currentTiles = [{ x: Number(area), y: Number(no) }];
-            currentTileW = image.width;
-            currentTileH = image.height;
-            currentMosaicCols = 1;
-            currentMosaicRows = 1;
-            try { signItems.forEach(it => { if (it) it._placedCountCache = null; }); } catch {}
-            render();
-            updatePixelMarkers();
-            resolve(true);
-          };
-          image.onerror = () => resolve(false);
-          image.src = url;
-        });
+        await loadSingleTile(area, no, true);
+        return true;
       }
+      return false;
     }
-    // Si no hay datos guardados, carga desde los inputs
     const area = (areaInput && areaInput.value) ? String(areaInput.value).trim() : '';
     const no = (noInput && noInput.value) ? String(noInput.value).trim() : '';
     if (!area || !no) return false;
-    return await new Promise(resolve => {
-      const url = buildUrl(area, no) + '?t=' + Date.now();
-      const image = new Image();
-      image.onload = () => {
-        img = image;
-        baseImageData = null;
-        currentTiles = [{ x: Number(area), y: Number(no) }];
-        currentTileW = image.width;
-        currentTileH = image.height;
-        currentMosaicCols = 1;
-        currentMosaicRows = 1;
-        try { signItems.forEach(it => { if (it) it._placedCountCache = null; }); } catch {}
-        render();
-        updatePixelMarkers();
-        resolve(true);
-      };
-      image.onerror = () => resolve(false);
-      image.src = url;
-    });
+    await loadSingleTile(area, no, true);
+    return true;
   } catch {
     return false;
   }
@@ -3173,40 +3135,38 @@ function hasSavedView(){
   } catch { return false; }
 }
 
+async function loadSingleTile(area, no, preserveView = false) {
+  const url = buildUrl(area, no) + '?t=' + Date.now();
+  const image = await new Promise((resolve, reject) => {
+    const imgEl = new Image();
+    imgEl.onload = () => resolve(imgEl);
+    imgEl.onerror = reject;
+    imgEl.src = url;
+  });
+  img = image;
+  baseImageData = null;
+  currentTiles = [{ x: Number(area), y: Number(no) }];
+  currentTileW = image.width;
+  currentTileH = image.height;
+  currentMosaicCols = 1;
+  currentMosaicRows = 1;
+  try { signItems.forEach(it => { if (it) it._placedCountCache = null; }); } catch {}
+  if (preserveView) {
+    render();
+  } else {
+    fitToView();
+  }
+  try { updatePixelMarkers(); } catch {}
+}
+
 function loadImage(area, no, preserveView = false) {
-  const url = buildUrl(area, no);
-  const image = new Image();
-
-  image.onload = () => {
-    const prevScale = state.scale;
-    const prevTx = state.translateX;
-    const prevTy = state.translateY;
-
-    img = image;
-    currentTiles = [{ x: Number(area), y: Number(no) }];
-    currentTileW = image.width;
-    currentTileH = image.height;
-    currentMosaicCols = 1;
-    currentMosaicRows = 1;
-    try { baseImageData = null; } catch {}
-
-    if (preserveView) {
-      state.scale = prevScale;
-      state.translateX = prevTx;
-      state.translateY = prevTy;
-      render();
-    } else if (hasSavedView()) {
-      render();
-      updatePixelMarkers();
-    } else {
-      fitToView();
-    }
-    localStorage.setItem('lastFetch', JSON.stringify({ mode: 'single', coords: [{ x: Number(area), y: Number(no) }] }));
-  };
-  image.onerror = () => {
-    alert(t('messages.imageLoadFailed'));
-  };
-  image.src = url;
+  loadSingleTile(area, no, preserveView || hasSavedView())
+    .then(() => {
+      localStorage.setItem('lastFetch', JSON.stringify({ mode: 'single', coords: [{ x: Number(area), y: Number(no) }] }));
+    })
+    .catch(() => {
+      alert(t('messages.imageLoadFailed'));
+    });
 }
     let rightEraseHeld = false;
     let rightEraseLastKey = null;
@@ -6329,10 +6289,10 @@ if (autoMode && assignedCount > 0 && !hadRequestError) {
     } else if (saved && saved.mode === 'single') {
       areaInput.value = String(saved.coords[0].x);
       noInput.value = String(saved.coords[0].y);
-      loadImage(areaInput.value, noInput.value);
+      loadSingleTile(areaInput.value, noInput.value, true);
     } else if (areaInput.value && noInput.value) {
       loadImage(areaInput.value, noInput.value);
-    }    
+    }
   } catch {}
   updateCounter();
   loadAccounts();
@@ -6351,7 +6311,7 @@ if (autoMode && assignedCount > 0 && !hadRequestError) {
         if (saved.mode === 'mosaic') {
           loadMosaic(saved.coords, true);
         } else if (saved.mode === 'single') {
-          loadImage(saved.coords[0].x, saved.coords[0].y, true);
+          loadSingleTile(saved.coords[0].x, saved.coords[0].y, true);
         }
       } catch {}
     }, CANVAS_REFRESH_MS);
