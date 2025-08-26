@@ -234,8 +234,9 @@
       cursor: pointer;
     }
     .thumb-action:hover { background: rgba(0,0,0,0.65); }
-    
+
     #sidebar .thumb-actions { display: none; }
+    #sidebar .thumb-item:hover .thumb-actions { display: flex; }
     .counter {
       position: absolute;
       top: 8px;
@@ -3774,9 +3775,7 @@ async function reloadCurrentBackground() {
             try { shiftSignItemsForOriginChange(prevOrigin, { x: Number(area), y: Number(no) }, prevW, prevH); } catch {}
             try { signItems.forEach(it => { if (it) it._placedCountCache = null; }); } catch {}
             try {
-              if (!hasSavedView()) {
-                if (neighborOverlays && neighborOverlays.size > 0) { neighborOverlays.clear(); overlayVersion++; hoveredGridCell = null; }
-              }
+              if (neighborOverlays && neighborOverlays.size > 0) { neighborOverlays.clear(); overlayVersion++; hoveredGridCell = null; }
             } catch {}
             render();
             updatePixelMarkers();
@@ -3820,9 +3819,7 @@ async function reloadCurrentBackground() {
         try { shiftSignItemsForOriginChange(prevOrigin, { x: Number(area), y: Number(no) }, prevW, prevH); } catch {}
         try { signItems.forEach(it => { if (it) it._placedCountCache = null; }); } catch {}
         try {
-          if (!hasSavedView()) {
-            if (neighborOverlays && neighborOverlays.size > 0) { neighborOverlays.clear(); overlayVersion++; hoveredGridCell = null; }
-          }
+          if (neighborOverlays && neighborOverlays.size > 0) { neighborOverlays.clear(); overlayVersion++; hoveredGridCell = null; }
         } catch {}
         render();
         updatePixelMarkers();
@@ -3884,11 +3881,9 @@ function loadImage(area, no, preserveView = false) {
     currentMosaicRows = 1;
     try { baseImageData = null; } catch {}
     try { shiftSignItemsForOriginChange(prevOrigin, { x: Number(area), y: Number(no) }, prevW, prevH); } catch {}
-    // Clear overlays only if we are NOT preserving view and also want to reset overlays
+    // Clear overlays from previous tile before restoring any saved ones
     try {
-      if (!preserveView) {
-        if (neighborOverlays && neighborOverlays.size > 0) { neighborOverlays.clear(); overlayVersion++; hoveredGridCell = null; }
-      }
+      if (neighborOverlays && neighborOverlays.size > 0) { neighborOverlays.clear(); overlayVersion++; hoveredGridCell = null; }
     } catch {}
 
     if (preserveView) {
@@ -4723,24 +4718,32 @@ function loadImage(area, no, preserveView = false) {
         if (zoom) {
           try {
             // Ensure the item's tile is loaded; if not, load it then zoom
-            const w = img ? (img.width|0) : 0;
-            const h = img ? (img.height|0) : 0;
-            const wx = Math.floor(item.worldX || 0);
-            const wy = Math.floor(item.worldY || 0);
-            const inCurrent3x3 = !!(img && wx >= -w && wx < 2*w && wy >= -h && wy < 2*h);
-            if (!inCurrent3x3) {
-              const areaNow = getCurrentTileCoords();
-              const areaX = Number(areaNow.x || 0);
-              const areaY = Number(areaNow.y || 0);
-              const dx = Math.floor(wx / Math.max(1, w));
-              const dy = Math.floor(wy / Math.max(1, h));
-              const targetArea = { x: areaX + dx, y: areaY + dy };
-              pendingZoomToItem = item;
-              loadImage(targetArea.x, targetArea.y, true);
-              // zoom will occur after load completes (see below)
-            } else {
-              zoomToSign(item);
-            }
+              const w = (img && img.width) ? (img.width|0) : (currentTileW|0);
+              const h = (img && img.height) ? (img.height|0) : (currentTileH|0);
+              if (!w || !h) {
+                zoomToSign(item);
+              } else {
+                const wx = Math.floor(item.worldX || 0);
+                const wy = Math.floor(item.worldY || 0);
+                const inCurrent3x3 = !!(img && wx >= -w && wx < 2*w && wy >= -h && wy < 2*h);
+                if (!inCurrent3x3) {
+                  const areaNow = getCurrentTileCoords();
+                  const areaX = Number(areaNow.x || 0);
+                  const areaY = Number(areaNow.y || 0);
+                  const dx = Math.floor(wx / Math.max(1, w));
+                  const dy = Math.floor(wy / Math.max(1, h));
+                  if (Number.isNaN(dx) || Number.isNaN(dy)) {
+                    zoomToSign(item);
+                  } else {
+                    const targetArea = { x: areaX + dx, y: areaY + dy };
+                    pendingZoomToItem = item;
+                    loadImage(targetArea.x, targetArea.y, true);
+                    // zoom will occur after load completes (see below)
+                  }
+                } else {
+                  zoomToSign(item);
+                }
+              }
           } catch { zoomToSign(item); }
         }
         try { localStorage.setItem('last.image.url', item.url || ''); localStorage.setItem('last.image.name', item.name || 'image.png'); } catch {}
