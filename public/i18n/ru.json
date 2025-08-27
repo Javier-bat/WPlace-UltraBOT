@@ -15,8 +15,9 @@
     "tokenPlaceholder": "Токен",
     "accountLabelDefault": "Аккаунт",
     "selectMode": {
-      "multi": "Выбрать с начала",
-      "frame": "Выбрать по рамке"
+      "sequential": "Последовательно",
+      "edge": "Сначала края",
+      "random": "Случайные цветовые группы"
     },
     "autoMode": {
       "on": "Авторежим включен",

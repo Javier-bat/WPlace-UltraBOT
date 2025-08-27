@@ -15,8 +15,9 @@
     "tokenPlaceholder": "Token",
     "accountLabelDefault": "Account",
     "selectMode": {
-      "multi": "Select from start",
-      "frame": "Select from outline"
+      "sequential": "Sequential",
+      "edge": "Outline first",
+      "random": "Random color groups"
     },
     "autoMode": {
       "on": "Auto mode on",

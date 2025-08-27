@@ -15,8 +15,9 @@
     "tokenPlaceholder": "Token",
     "accountLabelDefault": "Hesap",
     "selectMode": {
-      "multi": "Önce başlangıçtan seç",
-      "frame": "Önce çerçeveden seç"
+      "sequential": "Sıralı",
+      "edge": "Önce kenarlar",
+      "random": "Rastgele renk grupları"
     },
     "autoMode": {
       "on": "Auto mode açık",

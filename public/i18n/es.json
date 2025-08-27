@@ -15,8 +15,9 @@
     "tokenPlaceholder": "Token",
     "accountLabelDefault": "Cuenta",
     "selectMode": {
-      "multi": "Seleccionar desde inicio",
-      "frame": "Seleccionar desde contorno"
+      "sequential": "Secuencial",
+      "edge": "Bordes primero",
+      "random": "Grupos de color aleatorios"
     },
     "autoMode": {
       "on": "Modo automático activado",

@@ -15,8 +15,9 @@
     "tokenPlaceholder": "トークン",
     "accountLabelDefault": "アカウント",
     "selectMode": {
-      "multi": "開始位置から選択",
-      "frame": "枠から選択"
+      "sequential": "順番に",
+      "edge": "端から",
+      "random": "色ごとのランダム"
     },
     "autoMode": {
       "on": "自動モード ON",

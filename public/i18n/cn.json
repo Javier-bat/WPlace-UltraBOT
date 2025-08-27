@@ -15,8 +15,9 @@
     "tokenPlaceholder": "令牌",
     "accountLabelDefault": "账户",
     "selectMode": {
-      "multi": "从头选择",
-      "frame": "从轮廓选择"
+      "sequential": "顺序",
+      "edge": "先边缘",
+      "random": "随机颜色组"
     },
     "autoMode": {
       "on": "自动模式 开",

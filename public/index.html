@@ -43,7 +43,7 @@
       z-index: 1000;
     }
     label { font-size: 14px; }
-    input {
+    input, select {
       width: 100px;
       padding: 6px 8px;
       border-radius: 8px;
@@ -854,13 +854,11 @@
             <button id="start" class="app-btn" type="button" data-i18n="ready.start">Başlat</button>
           </div>
           <div class="controls-row" id="select-mode-controls">
-            <div class="select-mode-wrap">
-              <span id="select-mode-label-left" class="select-mode-label active" data-i18n="ready.selectMode.multi">Önce çok yerden seç</span>
-              <button id="select-mode-toggle" class="select-mode-track" type="button" role="switch" aria-checked="false" aria-label="Select mode">
-                <span class="select-mode-knob"></span>
-              </button>
-              <span id="select-mode-label-right" class="select-mode-label" data-i18n="ready.selectMode.frame">Önce çerçeveyi seç</span>
-            </div>
+            <select id="select-mode-select">
+              <option value="sequential" data-i18n="ready.selectMode.sequential">Sequential</option>
+              <option value="edge" data-i18n="ready.selectMode.edge">Edge first</option>
+              <option value="random" data-i18n="ready.selectMode.random">Random</option>
+            </select>
           </div>
         </div>
       </div>
@@ -6276,23 +6274,17 @@ function loadImage(area, no, preserveView = false) {
     const autoStartTrack = document.getElementById('auto-start-toggle');
     const autoStartLabelLeft = document.getElementById('auto-start-label-left');
     const autoStartLabelRight = document.getElementById('auto-start-label-right');
-    const selectModeTrack = document.getElementById('select-mode-toggle');
-    const selectModeLabelLeft = document.getElementById('select-mode-label-left');
-    const selectModeLabelRight = document.getElementById('select-mode-label-right');
-    let selectMode = 'multi';
+    const selectModeSelect = document.getElementById('select-mode-select');
+    let selectMode = 'sequential';
     let autoMode = false;
     let autoStart = false;
 
-    function updateSelectModeUi(){
-      try { if (selectModeTrack) selectModeTrack.classList.toggle('on', selectMode === 'frame'); } catch {}
-      try { if (selectModeTrack) selectModeTrack.setAttribute('aria-checked', selectMode === 'frame' ? 'true' : 'false'); } catch {}
-      try { if (selectModeLabelLeft) selectModeLabelLeft.classList.toggle('active', selectMode === 'multi'); } catch {}
-      try { if (selectModeLabelRight) selectModeLabelRight.classList.toggle('active', selectMode === 'frame'); } catch {}
-    }
     function setSelectMode(mode){
-      selectMode = (mode === 'frame') ? 'frame' : 'multi';
-      updateSelectModeUi();
+      if (mode !== 'edge' && mode !== 'random') mode = 'sequential';
+      selectMode = mode;
+      try { if (selectModeSelect) selectModeSelect.value = selectMode; } catch {}
     }
+
     function updateAutoModeUi(){
       try { if (autoModeTrack) autoModeTrack.classList.toggle('on', !!autoMode); } catch {}
       try { if (autoModeTrack) autoModeTrack.setAttribute('aria-checked', autoMode ? 'true' : 'false'); } catch {}
@@ -6312,6 +6304,8 @@ function loadImage(area, no, preserveView = false) {
       const savedAutoStart = localStorage.getItem('ready.autoStart');
       autoStart = (savedAutoStart === '1' || savedAutoStart === 'true');
       updateAutoStartUi();
+      const savedMode = localStorage.getItem('ready.selectMode');
+      setSelectMode(savedMode);
     } catch {}
     if (autoModeTrack) autoModeTrack.addEventListener('click', () => {
       autoMode = !autoMode;
@@ -6327,9 +6321,10 @@ function loadImage(area, no, preserveView = false) {
     if (autoModeLabelRight) autoModeLabelRight.addEventListener('click', () => { autoMode = true; try { localStorage.setItem('ready.autoMode','1'); } catch {}; updateAutoModeUi(); });
     if (autoStartLabelLeft) autoStartLabelLeft.addEventListener('click', () => { autoStart = false; try { localStorage.setItem('ready.autoStart','0'); } catch {}; updateAutoStartUi(); });
     if (autoStartLabelRight) autoStartLabelRight.addEventListener('click', () => { autoStart = true; try { localStorage.setItem('ready.autoStart','1'); } catch {}; updateAutoStartUi(); });
-    if (selectModeTrack) selectModeTrack.addEventListener('click', () => setSelectMode(selectMode === 'frame' ? 'multi' : 'frame'));
-    if (selectModeLabelLeft) selectModeLabelLeft.addEventListener('click', () => setSelectMode('multi'));
-    if (selectModeLabelRight) selectModeLabelRight.addEventListener('click', () => setSelectMode('frame'));
+    if (selectModeSelect) selectModeSelect.addEventListener('change', (e) => {
+      setSelectMode(e.target.value);
+      try { localStorage.setItem('ready.selectMode', selectMode); } catch {}
+    });
 
     function getAccountById(id) {
       const idStr = String(id);
@@ -6647,9 +6642,10 @@ function loadImage(area, no, preserveView = false) {
         const need = limit - already;
         let addedCount = 0;
         
-        if (selectMode === 'frame') {
-          const prev = autoSelectDeleteMode; // unused placeholder
+        if (selectMode === 'edge') {
           addedCount = autoSelectFrameFirst(selItem, need);
+        } else if (selectMode === 'random') {
+          addedCount = autoSelectRandomByColor(selItem, need);
         } else {
         let sx = start.x|0, sy = start.y|0;
         const totalCells = w * h;
@@ -6768,6 +6764,49 @@ function loadImage(area, no, preserveView = false) {
         }
         const did = addPixelSelection(selItem, p.x, p.y, selectedOverrideColorId != null ? selectedOverrideColorId : null);
         if (did) added++;
+      }
+      return added;
+    }
+
+    function autoSelectRandomByColor(selItem, need){
+      if (!selItem || !selItem.image) return 0;
+      const w = selItem.image.naturalWidth|0;
+      const h = selItem.image.naturalHeight|0;
+      if (!(w && h)) return 0;
+      const colorBuckets = new Map();
+      const map = getSelectedMap(selItem);
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (!isOpaquePixel(selItem, x, y)) continue;
+          if (selectedOverrideColorId == null && isSamePaletteIdAsBase(selItem, x, y)) continue;
+          if (map && map.has(keyFor(x, y))) continue;
+          const pid = (selectedOverrideColorId != null && selectedOverrideColorId !== 0)
+            ? selectedOverrideColorId
+            : getItemPixelPaletteId(selItem, x, y);
+          let arr = colorBuckets.get(pid);
+          if (!arr) { arr = []; colorBuckets.set(pid, arr); }
+          arr.push({ x, y });
+        }
+      }
+      const colors = Array.from(colorBuckets.keys());
+      for (let i = colors.length - 1; i > 0; i--) {
+        const j = (Math.random() * (i + 1)) | 0;
+        const tmp = colors[i];
+        colors[i] = colors[j];
+        colors[j] = tmp;
+      }
+      let added = 0;
+      outer: for (let ci = 0; ci < colors.length && added < need; ci++) {
+        const bucket = colorBuckets.get(colors[ci]);
+        for (let i = 0; i < bucket.length && added < need; i++) {
+          if (selectedOverrideColorId != null && selectedOverrideColorId !== 0 && isPremiumColorId(selectedOverrideColorId)) {
+            const remain = getPremiumColorRemainingLimit(selectedOverrideColorId);
+            if (!(remain > 0)) break outer;
+          }
+          const p = bucket[i];
+          const did = addPixelSelection(selItem, p.x, p.y, selectedOverrideColorId != null ? selectedOverrideColorId : null);
+          if (did) added++;
+        }
       }
       return added;
     }

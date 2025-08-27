@@ -15,8 +15,9 @@
     "tokenPlaceholder": "Jeton",
     "accountLabelDefault": "Compte",
     "selectMode": {
-      "multi": "Sélection depuis le départ",
-      "frame": "Sélection depuis le cadre"
+      "sequential": "Séquentiel",
+      "edge": "Bordures d'abord",
+      "random": "Groupes de couleur aléatoires"
     },
     "autoMode": {
       "on": "Mode auto activé",
