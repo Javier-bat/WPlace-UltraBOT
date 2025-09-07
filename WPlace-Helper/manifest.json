@@ -8,7 +8,9 @@
   },
   "permissions": [
     "storage",
-    "cookies"
+    "cookies",
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
     "https://wplace.live/*",

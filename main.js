@@ -741,6 +741,90 @@ function startServer(port, host) {
       res.end(JSON.stringify(accounts));
       return;
     }
+
+    // Autopaint block state (CORS-enabled for extension/page access)
+    if (parsed.pathname === '/api/autopaint-state' && req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '600'
+      });
+      res.end();
+      return;
+    }
+    if (parsed.pathname === '/api/autopaint-state' && req.method === 'GET') {
+      const settings = readJson(SETTINGS_FILE, { cf_clearance: '', worldX: null, worldY: null, autopaintEnabled: true });
+      const until = Number(settings && settings.autopaintBlockUntil) || 0;
+      const now = Date.now();
+      const remainingMs = Math.max(0, until - now);
+      const remainingSeconds = Math.ceil(remainingMs / 1000);
+      const body = JSON.stringify({ blocked: remainingSeconds > 0, remainingSeconds, until, enabled: settings.autopaintEnabled !== false });
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+      return;
+    }
+    if (parsed.pathname === '/api/autopaint-block' && req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '600'
+      });
+      res.end();
+      return;
+    }
+    if (parsed.pathname === '/api/autopaint-block' && req.method === 'POST') {
+      readJsonBody(req).then((body) => {
+        const settings = readJson(SETTINGS_FILE, { cf_clearance: '', worldX: null, worldY: null });
+        const seconds = Number(body && body.seconds);
+        const untilIn = Number(body && body.until);
+        let until = 0;
+        if (Number.isFinite(seconds) && seconds > 0) until = Date.now() + Math.round(seconds * 1000);
+        if (Number.isFinite(untilIn) && untilIn > 0) until = Math.max(until, Math.floor(untilIn));
+        const next = { ...settings, autopaintBlockUntil: until };
+        writeJson(SETTINGS_FILE, next);
+        res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
+        res.end();
+      }).catch(() => {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: 'invalid json' }));
+      });
+      return;
+    }
+
+    // Autopaint enabled flag (to sync with extension)
+    if (parsed.pathname === '/api/autopaint-enabled' && req.method === 'OPTIONS') {
+      res.writeHead(204, {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Max-Age': '600'
+      });
+      res.end();
+      return;
+    }
+    if (parsed.pathname === '/api/autopaint-enabled' && req.method === 'GET') {
+      const settings = readJson(SETTINGS_FILE, { autopaintEnabled: true });
+      const body = JSON.stringify({ enabled: settings.autopaintEnabled !== false });
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+      return;
+    }
+    if (parsed.pathname === '/api/autopaint-enabled' && req.method === 'POST') {
+      readJsonBody(req).then((body) => {
+        const settings = readJson(SETTINGS_FILE, { autopaintEnabled: true });
+        const enabled = !!(body && body.enabled);
+        const next = { ...settings, autopaintEnabled: enabled };
+        writeJson(SETTINGS_FILE, next);
+        res.writeHead(204, { 'Access-Control-Allow-Origin': '*' });
+        res.end();
+      }).catch(() => {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: 'invalid json' }));
+      });
+      return;
+    }
     
     if (parsed.pathname && parsed.pathname.startsWith('/api/accounts/') && req.method === 'DELETE') {
       const idStr = parsed.pathname.split('/').pop();

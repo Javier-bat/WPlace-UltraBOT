@@ -1860,6 +1860,11 @@
           const map = { up: moveUpBtn, down: moveDownBtn, left: moveLeftBtn, right: moveRightBtn };
           const el = map[dir]; if (!el) return;
           if (on) el.classList.add('kbd-press'); else el.classList.remove('kbd-press');
+          console.log('wplace: autopaint — (conf) umbral usado =', String(Math.round((Math.max(0, Math.min(100, Number(AUTOPIXEL_THRESHOLD_PCT)||0)) / 100)*100)) + '%', 'seg/pixel =', AUTOPIXEL_SECONDS_PER_PIXEL);
+        } catch {}
+        try {
+          console.log('wplace: autopaint — umbral % (efectivo):', String(Math.round(THRESHOLD*100)) + '%');
+          console.log('wplace: autopaint — seg/pixel usados =', AUTOPIXEL_SECONDS_PER_PIXEL);
         } catch {}
       }
       window.addEventListener('keydown', (e) => {
@@ -5698,6 +5703,206 @@ function loadImage(area, no, preserveView = false) {
         const res = await fetch('/api/accounts');
         const data = await res.json();
         if (Array.isArray(data)) renderAccountsTable(data);
+      } catch {}
+      try {
+        try { console.log('wplace: loadAccounts -> updateAutopaintBlockFromAccounts rows=', Array.isArray(accountsData) ? accountsData.length : 'n/a'); } catch {}
+        updateAutopaintBlockFromAccounts(accountsData);
+      } catch (e) { try { console.warn('wplace: updateAutopaintBlockFromAccounts error', e && (e.message || e)); } catch {} }
+    }
+    // --- Autopaint wait timer logic ---
+    // Parámetros configurables vía localStorage:
+    //  - 'autopixel.secondsPerPixel' (número > 0)
+    //  - 'autopixel.thresholdPct' (0..100)
+    let AUTOPIXEL_SECONDS_PER_PIXEL = 30; // por defecto 30s por pixel
+    let AUTOPIXEL_THRESHOLD_PCT = 20; // por defecto 20%
+    function readAutopixelConfig(){
+      try {
+        const sp = parseFloat(localStorage.getItem('autopixel.secondsPerPixel') || '');
+        if (Number.isFinite(sp) && sp > 0) AUTOPIXEL_SECONDS_PER_PIXEL = Math.floor(sp);
+      } catch {}
+      try {
+        const tp = parseFloat(localStorage.getItem('autopixel.thresholdPct') || '');
+        if (Number.isFinite(tp) && tp >= 0 && tp <= 100) AUTOPIXEL_THRESHOLD_PCT = tp;
+      } catch {}
+      try { if (!Number.isFinite(AUTOPIXEL_THRESHOLD_PCT)) AUTOPIXEL_THRESHOLD_PCT = 20; } catch {}
+    }
+    let waitCountdownTimer = null;
+    function stopWaitTimer(){ try { if (waitCountdownTimer) clearInterval(waitCountdownTimer); } catch {} waitCountdownTimer = null; }
+    function ensureAutopaintTimerElement(){
+      try {
+        let el = document.getElementById('autopaint-timer');
+        if (el) return el;
+        const row = document.querySelector('#control-panel .controls-row');
+        if (!row) return null;
+        el = document.createElement('div');
+        el.id = 'autopaint-timer';
+        el.className = 'app-btn';
+        el.hidden = true;
+        el.title = 'Tiempo estimado para recarga de pixeles';
+        el.textContent = 'Esperando · --:--';
+        row.appendChild(el);
+        return el;
+      } catch { return null; }
+    }
+    function isAutopaintFeatureEnabled(){
+      try {
+        const v = (localStorage.getItem('wplace_autopaint_enabled') || '').toLowerCase();
+        if (v === '0' || v === 'false' || v === 'off' || v === 'no') return false;
+      } catch {}
+      return true;
+    }
+    async function updateAutopaintBlockFromAccounts(rows){
+      try {
+        const el = ensureAutopaintTimerElement();
+        try { readAutopixelConfig(); } catch {}
+        // Si el autopaint está desactivado, no mostrar contador ni calcular bloqueos
+        if (!isAutopaintFeatureEnabled()) {
+          try { console.log('wplace: autopaint — desactivado. Oculto contador y omito cálculo.'); } catch {}
+          if (el) { el.hidden = true; el.textContent = ''; }
+          return;
+        }
+        // Honrar el toggle global del servidor (sin depender de localStorage)
+        try {
+          const en0 = await fetch('/api/autopaint-enabled', { method: 'GET' }).then(r => r.ok ? r.json() : null);
+          if (en0 && en0.enabled === false) { if (el) { el.hidden = true; el.textContent = ''; } return; }
+        } catch {}
+        // Si el servidor ya está bloqueado, mostrar el contador inmediatamente y salir
+        try {
+          const st0 = await fetch('/api/autopaint-state', { method: 'GET' }).then(r => r.ok ? r.json() : null);
+          if (st0 && st0.blocked) {
+            try { console.log('wplace: autopaint — bloqueado por servidor al iniciar. Mostrando contador.'); } catch {}
+            stopWaitTimer();
+            if (el) el.hidden = false;
+            function renderCountdown(remainingSeconds){
+              const s = Math.max(0, Math.floor(remainingSeconds||0));
+              const h = Math.floor(s / 3600);
+              const m = Math.floor((s % 3600) / 60);
+              const sec = Math.floor(s % 60);
+              const hh = h > 0 ? String(h).padStart(2,'0') + ':' : '';
+              const mm = String(m).padStart(2,'0');
+              const ss = String(sec).padStart(2,'0');
+              if (el) el.textContent = `Esperando ${hh}${mm}:${ss}`;
+            }
+            try { renderCountdown(Number(st0 && st0.remainingSeconds) || 0); } catch {}
+            // Limpiar selecciones durante el bloqueo inicial
+            try { clearAllReadySelections(); localStorage.setItem('autopixel.block.cleared', '1'); } catch {}
+            async function tick0(){
+              try {
+                const r = await fetch('/api/autopaint-state', { method: 'GET' });
+                const j = await r.json();
+                const rem = Number(j && j.remainingSeconds) || 0;
+                renderCountdown(rem);
+                if (!(j && j.blocked)) {
+                  stopWaitTimer(); if (el) el.hidden = true;
+                  // Restaurar autoselect cuando termine el contador
+                  try {
+                    if (localStorage.getItem('autopixel.block.cleared') === '1') {
+                      localStorage.removeItem('autopixel.block.cleared');
+                      const btn = document.getElementById('btn-auto-select');
+                      if (btn) { try { window.autoSelectDeleteMode = false; } catch {}; btn.click(); }
+                    }
+                  } catch {}
+                }
+              } catch {}
+            }
+            waitCountdownTimer = setInterval(tick0, 1000);
+            return;
+          }
+        } catch {}
+        if (!Array.isArray(rows) || rows.length === 0) { try { console.log('wplace: autopaint block — no rows, hiding'); } catch {} if (el) { el.hidden = true; el.textContent = ''; } return; }
+        // Only consider accounts that are explicitly active and have valid max
+        const valid = rows.filter(r => (r && r.active === true) && Number(r.pixelMax) > 0);
+        try { console.log('wplace: autopaint — cuentas activas consideradas:', valid.length); } catch {}
+        if (valid.length === 0) { try { console.log('wplace: autopaint block — no valid accounts, hiding'); } catch {} if (el) { el.hidden = true; el.textContent = ''; } return; }
+        const percents = valid.map(r => {
+          const c = Math.max(0, Math.floor(Number(r.pixelCount)||0));
+          const m = Math.max(0, Math.floor(Number(r.pixelMax)||0));
+          return m > 0 ? (c / m) : 0;
+        });
+        try {
+          console.log('wplace: autopaint — detalle por cuenta (válidas):');
+          valid.forEach((r, i) => {
+            const c = Math.max(0, Math.floor(Number(r.pixelCount)||0));
+            const m = Math.max(0, Math.floor(Number(r.pixelMax)||0));
+            const pct = m > 0 ? (c / m) : 0;
+            console.log(`  #${i+1} id=${r?.id} nombre="${r?.name||''}" activa=${r && r.active !== false} token=${!!r?.token} -> ${c}/${m} (${Math.round(pct*100)}%)`);
+          });
+        } catch {}
+        const THRESHOLD = Math.max(0, Math.min(100, Number(AUTOPIXEL_THRESHOLD_PCT)||0)) / 100;
+        const allBelow20 = percents.every(p => p < THRESHOLD);
+        // Si el servidor ya está bloqueado, lo respetamos aunque alguna cuenta cruce el umbral
+        try {
+          const st = await fetch('/api/autopaint-state', { method: 'GET' }).then(r => r.ok ? r.json() : null);
+          if (st && st.blocked) {
+            try { console.log('wplace: autopaint — estado actual: bloqueado por servidor. Manteniendo bloqueo.'); } catch {}
+            return;
+          }
+        } catch {}
+        try {
+          console.log('wplace: autopaint — umbral %:', '20%');
+          console.log('wplace: autopaint — ¿todas por debajo del umbral?', allBelow20);
+          console.log('wplace: autopaint — percents resumidos =', percents.map(p => (Math.round(p*100)+'%')));
+        } catch {}
+        if (!allBelow20) {
+          // Clear any existing block
+          stopWaitTimer();
+          try { await fetch('/api/autopaint-block', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ until: 0 }) }); } catch {}
+          if (el) { el.hidden = true; el.textContent = ''; }
+          try { console.log('wplace: autopaint block — cleared'); } catch {}
+          return;
+        }
+        // Pick the account with the least total capacity (pixelMax)
+        let minAcc = null;
+        for (const r of valid) { if (!minAcc || Number(r.pixelMax) < Number(minAcc.pixelMax)) minAcc = r; }
+        try {
+          const cTmp = Math.max(0, Math.floor(Number(minAcc?.pixelCount)||0));
+          const mTmp = Math.max(0, Math.floor(Number(minAcc?.pixelMax)||0));
+          const pctTmp = mTmp > 0 ? (cTmp / mTmp) : 0;
+          console.log(`wplace: autopaint — La cuenta con menos píxeles máximos es: id=${minAcc?.id} nombre="${minAcc?.name||''}" -> ${cTmp}/${mTmp} (${Math.round(pctTmp*100)}%)`);
+        } catch {}
+        const count = Math.max(0, Math.floor(Number(minAcc.pixelCount)||0));
+        const max = Math.max(0, Math.floor(Number(minAcc.pixelMax)||0));
+        const missing = Math.max(0, max - count);
+        const seconds = missing * AUTOPIXEL_SECONDS_PER_PIXEL;
+        const until = Date.now() + seconds * 1000;
+        try {
+          console.log(`wplace: autopaint — faltan ${missing} píxeles para llenar esa cuenta (max=${max}).`);
+          console.log('wplace: autopaint — decisión: BLOQUEAR recarga. Tiempo estimado (segundos)=', seconds, ' (', Math.round(seconds/60), 'min aprox.)');
+        } catch {}
+        try { await fetch('/api/autopaint-block', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ until }) }); } catch {}
+        // Start/refresh visual countdown
+        stopWaitTimer();
+        if (el) el.hidden = false;
+        // Limpiar selecciones durante el bloqueo
+        try { clearAllReadySelections(); localStorage.setItem('autopixel.block.cleared', '1'); } catch {}
+        function renderCountdown(remainingSeconds){
+          const s = Math.max(0, Math.floor(remainingSeconds||0));
+          const h = Math.floor(s / 3600);
+          const m = Math.floor((s % 3600) / 60);
+          const sec = Math.floor(s % 60);
+          const hh = h > 0 ? String(h).padStart(2,'0') + ':' : '';
+          const mm = String(m).padStart(2,'0');
+          const ss = String(sec).padStart(2,'0');
+          if (el) el.textContent = `Esperando ${hh}${mm}:${ss}`;
+        }
+        async function tick(){
+          try {
+            const r = await fetch('/api/autopaint-state', { method: 'GET' });
+            const j = await r.json();
+            const rem = Number(j && j.remainingSeconds) || 0;
+            renderCountdown(rem);
+            try {
+              if (!(j && j.blocked) && localStorage.getItem('autopixel.block.cleared') === '1') {
+                localStorage.removeItem('autopixel.block.cleared');
+                const btn = document.getElementById('btn-auto-select');
+                if (btn) { try { window.autoSelectDeleteMode = false; } catch {}; btn.click(); }
+              }
+            } catch {}
+            if (!(j && j.blocked)) { stopWaitTimer(); if (el) el.hidden = true; try { console.log('wplace: autopaint block — unblocked'); } catch {} }
+          } catch (e) { try { console.warn('wplace: autopaint block tick failed', e && (e.message || e)); } catch {} }
+        }
+        await tick();
+        waitCountdownTimer = setInterval(tick, 1000);
       } catch {}
     }
     async function refreshAccountById(accountId){

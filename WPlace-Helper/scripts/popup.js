@@ -13,6 +13,9 @@ document.addEventListener('DOMContentLoaded', function() {
   const toggleCapture = document.getElementById('toggle-capture');
   const toggleWrap = document.getElementById('toggle-capture-wrap');
   const toggleLabel = document.getElementById('toggle-capture-label');
+  const toggleAutopaint = document.getElementById('toggle-autopaint');
+  const toggleAutopaintWrap = document.getElementById('toggle-autopaint-wrap');
+  const toggleAutopaintLabel = document.getElementById('toggle-autopaint-label');
 
   function setStatus(text) {
     if (!statusDiv) return;
@@ -38,6 +41,13 @@ document.addEventListener('DOMContentLoaded', function() {
     if (toggleLabel) toggleLabel.textContent = enabled ? 'On' : 'Off';
   });
 
+  chrome.storage.local.get(['wplace_autopaint_enabled'], function(result) {
+    const apEnabled = result && typeof result.wplace_autopaint_enabled === 'boolean' ? result.wplace_autopaint_enabled : false;
+    if (toggleAutopaint) toggleAutopaint.checked = apEnabled;
+    if (toggleAutopaintWrap) toggleAutopaintWrap.setAttribute('data-checked', String(!!apEnabled));
+    if (toggleAutopaintLabel) toggleAutopaintLabel.textContent = apEnabled ? 'On' : 'Off';
+  });
+
   chrome.storage.onChanged.addListener(function(changes, area) {
     if (!tokenInput) return;
     if (area === 'local' && changes && changes.wplace_token && tokenInput) {
@@ -54,6 +64,12 @@ document.addEventListener('DOMContentLoaded', function() {
         worldYInput.value = changes.wplace_world_y.newValue || '-';
       }
     }
+    if (area === 'local' && changes && Object.prototype.hasOwnProperty.call(changes, 'wplace_autopaint_enabled')) {
+      const apEnabled = !!changes.wplace_autopaint_enabled.newValue;
+      if (toggleAutopaint) toggleAutopaint.checked = apEnabled;
+      if (toggleAutopaintWrap) toggleAutopaintWrap.setAttribute('data-checked', String(apEnabled));
+      if (toggleAutopaintLabel) toggleAutopaintLabel.textContent = apEnabled ? 'On' : 'Off';
+    }
   });
 
   if (toggleCapture) {
@@ -62,6 +78,20 @@ document.addEventListener('DOMContentLoaded', function() {
       if (toggleWrap) toggleWrap.setAttribute('data-checked', String(enabled));
       if (toggleLabel) toggleLabel.textContent = enabled ? 'On' : 'Off';
       chrome.storage.local.set({ wplace_enabled: enabled });
+    });
+  }
+
+  if (toggleAutopaint) {
+    toggleAutopaint.addEventListener('change', function() {
+      const apEnabled = !!toggleAutopaint.checked;
+      if (toggleAutopaintWrap) toggleAutopaintWrap.setAttribute('data-checked', String(apEnabled));
+      if (toggleAutopaintLabel) toggleAutopaintLabel.textContent = apEnabled ? 'On' : 'Off';
+      chrome.storage.local.set({ wplace_autopaint_enabled: apEnabled });
+      // Also inform local server so the app can honor the toggle
+      try {
+        fetch('http://localhost:3000/api/autopaint-enabled', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: apEnabled }) }).catch(() => {});
+        fetch('http://127.0.0.1:3000/api/autopaint-enabled', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: apEnabled }) }).catch(() => {});
+      } catch (_) {}
     });
   }
 

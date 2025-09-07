@@ -1,6 +1,39 @@
 
 (function () {
-	let ENABLED = true; 
+    let ENABLED = true; 
+    // Track recent user gesture to allow manual paint even during block
+    let lastUserGestureAt = 0;
+    const USER_GESTURE_WINDOW_MS = 1500;
+    try {
+        const markGesture = () => { lastUserGestureAt = Date.now(); };
+        window.addEventListener('pointerdown', markGesture, { capture: true, passive: true });
+        window.addEventListener('keydown', markGesture, { capture: true, passive: true });
+        window.addEventListener('touchstart', markGesture, { capture: true, passive: true });
+    } catch (e) {}
+    const hasFreshGesture = () => (Date.now() - lastUserGestureAt) <= USER_GESTURE_WINDOW_MS;
+    // Cache for server block state
+    let lastBlockCheckAt = 0;
+    let lastBlocked = false;
+    const BLOCK_CHECK_TTL_MS = 1500;
+    async function isAutopaintBlocked() {
+        const now = Date.now();
+        if (now - lastBlockCheckAt < BLOCK_CHECK_TTL_MS) return lastBlocked;
+        lastBlockCheckAt = now;
+        try {
+            const tryFetch = async (u) => {
+                const r = await fetch(u, { method: 'GET' });
+                if (!r.ok) return null;
+                return await r.json();
+            };
+            let j = await tryFetch('http://localhost:3000/api/autopaint-state');
+            if (!j) j = await tryFetch('http://127.0.0.1:3000/api/autopaint-state');
+            lastBlocked = !!(j && j.blocked);
+        } catch (e) {
+            // On error, assume not blocked to avoid breaking manual usage
+            lastBlocked = false;
+        }
+        return lastBlocked;
+    }
 	const targetOrigin = 'https://backend.wplace.live';
 	const targetPathPrefix = '/s0/pixel/';
 
@@ -186,25 +219,29 @@
 
         const originalFetch = window.fetch;
         window.fetch = async function(input, init) {
-                const url = typeof input === 'string' ? input : (input && input.url);
-                if (isTarget(url)) {
-                        try {
-                                if (ENABLED) {
-                                        const body = init && init.body;
-                                        const text = await decodeBodyToText(body);
-                                        const { token } = extractBodyFields(text);
-                                        const headersSource = (init && init.headers) || (input && input.headers);
-                                        const xpaw = extractHeader(headersSource, 'x-pawtect-token');
-                                        const { x, y } = extractWorldXY(url);
-                                        if (token) postToken(token, x, y, xpaw);
-                                }
-                        } catch (e) {}
-                        // Block the pixel POST after capturing token to avoid sending from page directly
-                        if (ENABLED) {
-                                return new Response(null, { status: 204, statusText: 'No Content' });
-                        }
-                }
-                return originalFetch.apply(this, arguments);
+            const url = typeof input === 'string' ? input : (input && input.url);
+            if (isTarget(url)) {
+                try {
+                    if (ENABLED) {
+                        const body = init && init.body;
+                        const text = await decodeBodyToText(body);
+                        const { token } = extractBodyFields(text);
+                        const headersSource = (init && init.headers) || (input && input.headers);
+                        const xpaw = extractHeader(headersSource, 'x-pawtect-token');
+                        const { x, y } = extractWorldXY(url);
+                        if (token) postToken(token, x, y, xpaw);
+                    }
+                } catch (e) {}
+                // Respect server block: block auto paints unless there's a fresh user gesture
+                try {
+                    const blocked = await isAutopaintBlocked();
+                    if (blocked && !hasFreshGesture()) {
+                        try { console.log('wplacer: pageHook — bloqueado por servidor, bloqueando pixel POST (fetch).'); } catch {}
+                        return new Response(null, { status: 204, statusText: 'No Content' });
+                    }
+                } catch {}
+            }
+            return originalFetch.apply(this, arguments);
         };
 
         const originalOpen = XMLHttpRequest.prototype.open;
@@ -223,42 +260,58 @@
                 return originalSetRequestHeader.apply(this, arguments);
         };
         XMLHttpRequest.prototype.send = function(body) {
-                if (isTarget(lastUrl)) {
-                        try {
-                                if (ENABLED) {
-                                        decodeBodyToText(body).then(text => {
-                                                const { token } = extractBodyFields(text);
-                                                const { x, y } = extractWorldXY(lastUrl);
-                                                const xpaw = this.__xpaw || null;
-                                                if (token) postToken(token, x, y, xpaw);
-                                                this.__xpaw = null;
-                                        });
-                                }
-                        } catch (e) {}
-                }
-                return originalSend.apply(this, arguments);
+            if (isTarget(lastUrl)) {
+                try {
+                    if (ENABLED) {
+                        decodeBodyToText(body).then(text => {
+                            const { token } = extractBodyFields(text);
+                            const { x, y } = extractWorldXY(lastUrl);
+                            const xpaw = this.__xpaw || null;
+                            if (token) postToken(token, x, y, xpaw);
+                            this.__xpaw = null;
+                        });
+                    }
+                } catch (e) {}
+                // Respect server block for XHR
+                try {
+                    isAutopaintBlocked().then(blocked => {
+                        if (blocked && !hasFreshGesture()) {
+                            try { console.log('wplacer: pageHook — bloqueado por servidor, bloqueando pixel POST (XHR).'); } catch {}
+                            try { this.abort(); } catch (_) {}
+                        } else {
+                            try { return originalSend.apply(this, arguments); } catch (_) {}
+                        }
+                    });
+                    return; // prevent duplicate send; async branch will handle
+                } catch (_) {}
+            }
+            return originalSend.apply(this, arguments);
         };
 
 	const originalSendBeacon = navigator.sendBeacon ? navigator.sendBeacon.bind(navigator) : null;
-	if (originalSendBeacon) {
-		navigator.sendBeacon = function(url, data) {
-			if (isTarget(url)) {
-				try {
-                                if (ENABLED) {
-                                        decodeBodyToText(data).then(text => {
-                                                const { token } = extractBodyFields(text);
-                                                const { x, y } = extractWorldXY(url);
-                                                if (token) postToken(token, x, y, null);
-                                        });
-                                }
-				} catch (e) {}
-				if (ENABLED) {
-					return false;
-				}
-			}
-			return originalSendBeacon.apply(this, arguments);
-		};
-	}
+        if (originalSendBeacon) {
+            navigator.sendBeacon = function(url, data) {
+                if (isTarget(url)) {
+                    try {
+                        if (ENABLED) {
+                            decodeBodyToText(data).then(text => {
+                                const { token } = extractBodyFields(text);
+                                const { x, y } = extractWorldXY(url);
+                                if (token) postToken(token, x, y, null);
+                            });
+                        }
+                    } catch (e) {}
+                    try {
+                        const blockedNow = lastBlocked; // use cached to avoid async in sendBeacon
+                        if (blockedNow && !hasFreshGesture()) {
+                            try { console.log('wplacer: pageHook — bloqueado por servidor, bloqueando pixel POST (beacon).'); } catch {}
+                            return false;
+                        }
+                    } catch (_) {}
+                }
+                return originalSendBeacon.apply(this, arguments);
+            };
+        }
 })();
 
 
